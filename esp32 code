@@ -1,0 +1,434 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <TinyGPS++.h>
+
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+Adafruit_SSD1306 display(
+  SCREEN_WIDTH,
+  SCREEN_HEIGHT,
+  &Wire,
+  -1
+);
+TinyGPSPlus gps;
+HardwareSerial GPS(2);
+
+double latitude = 0.0;
+double longitude = 0.0;
+
+// =======================
+// WiFi + Supabase
+// =======================
+
+const char* ssid = "Dhanam4G";
+const char* password = "Rtsumathi123";
+
+String supabaseUrl =
+  "https://vpwejxhiwfmrwurfvusd.supabase.co/rest/v1/device_data";
+
+String apiKey =
+  "sb_publishable_4mnUMdcLqg-KmpwDC80jbQ_WYl5tYic";
+
+unsigned long lastUpload = 0;
+
+// =======================
+// Pins
+// =======================
+
+// Obstacle Sensor (Front)
+#define OBS_TRIG 5
+#define OBS_ECHO 18
+
+// Depth Sensor (Downward)
+#define DEP_TRIG 25
+#define DEP_ECHO 26
+
+// Buzzer
+#define BUZZER 23
+
+// Vibration Motor
+#define VIBRATION 19
+
+// =======================
+// Thresholds
+// =======================
+
+#define OBS_CLOSE 20
+#define OBS_MEDIUM 50
+#define OBS_FAR 100
+
+#define DEP_THRESHOLD 70
+
+// =======================
+// Distance Function
+// =======================
+
+float getDistance(int trigPin, int echoPin)
+{
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(3);
+
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH, 30000);
+
+  if (duration == 0)
+    return -1;
+
+  float distance = duration * 0.0343 / 2.0;
+
+  if (distance < 2 || distance > 400)
+    return -1;
+
+  return distance;
+}
+
+// =======================
+// WiFi Reconnect
+// =======================
+
+void reconnectWiFi()
+{
+  if (WiFi.status() == WL_CONNECTED)
+    return;
+
+  Serial.println("WiFi Lost. Reconnecting...");
+
+  WiFi.begin(ssid, password);
+
+  int attempts = 0;
+
+  while (WiFi.status() != WL_CONNECTED && attempts < 20)
+  {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.println();
+    Serial.println("WiFi Reconnected");
+  }
+}
+
+// =======================
+// Supabase Upload
+// =======================
+
+void sendToSupabase(float obstacleDistance)
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.println("WiFi Not Connected");
+    return;
+  }
+
+  HTTPClient http;
+
+  http.begin(supabaseUrl);
+
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("apikey", apiKey);
+  http.addHeader("Authorization", "Bearer " + apiKey);
+  http.addHeader("Prefer", "return=minimal");
+
+String payload =
+  "{\"latitude\":" + String(latitude, 6) +
+  ",\"longitude\":" + String(longitude, 6) +
+  ",\"obstacle_distance\":" +
+  String((int)obstacleDistance) +
+  "}";
+
+  int httpCode = http.POST(payload);
+
+  Serial.print("Supabase Response: ");
+  Serial.println(httpCode);
+
+  http.end();
+}
+
+// =======================
+// Setup
+// =======================
+
+void setup()
+{
+  Serial.begin(115200);
+
+  GPS.begin(4800, SERIAL_8N1, 16, 17);
+
+  Serial.println("GPS Started");
+
+  pinMode(OBS_TRIG, OUTPUT);
+  pinMode(OBS_ECHO, INPUT);
+
+  pinMode(DEP_TRIG, OUTPUT);
+  pinMode(DEP_ECHO, INPUT);
+
+  pinMode(BUZZER, OUTPUT);
+
+  pinMode(VIBRATION, OUTPUT);
+  digitalWrite(VIBRATION, LOW);
+
+  Wire.begin(21, 22);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
+  {
+    Serial.println("OLED Not Found");
+    while (1);
+  }
+
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+
+  display.setTextSize(2);
+  display.setCursor(5, 20);
+  display.println("SMART");
+  display.display();
+
+  delay(1500);
+
+  // =======================
+  // Connecting WiFi Screen
+  // =======================
+
+  display.clearDisplay();
+  display.setTextSize(1);
+
+  display.setCursor(0, 0);
+  display.println("SMART BLIND STICK");
+
+  display.setCursor(0, 25);
+  display.println("Connecting WiFi...");
+  display.display();
+
+  Serial.println("Connecting WiFi...");
+
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("WiFi Connected");
+
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  // =======================
+  // WiFi Connected Screen
+  // =======================
+
+  display.clearDisplay();
+
+  display.setCursor(0, 0);
+  display.println("SMART BLIND STICK");
+
+  display.setCursor(0, 20);
+  display.println("WiFi Connected");
+
+  display.setCursor(0, 35);
+  display.println(WiFi.localIP());
+
+  display.display();
+
+  delay(3000);
+}
+
+// =======================
+// Loop
+// =======================
+
+void loop()
+{
+  while (GPS.available())
+{
+  gps.encode(GPS.read());
+}
+
+if (gps.location.isUpdated())
+{
+  latitude = gps.location.lat();
+  longitude = gps.location.lng();
+
+  Serial.print("Latitude: ");
+  Serial.println(latitude, 6);
+
+  Serial.print("Longitude: ");
+  Serial.println(longitude, 6);
+
+  Serial.print("Satellites: ");
+  Serial.println(gps.satellites.value());
+
+  Serial.println("----------------");
+}
+  reconnectWiFi();
+
+  float obsDistance = getDistance(OBS_TRIG, OBS_ECHO);
+
+  delay(50);
+
+  float depDistance = getDistance(DEP_TRIG, DEP_ECHO);
+
+  Serial.print("OBS: ");
+  Serial.print(obsDistance);
+  Serial.print(" cm   ");
+
+  Serial.print("DEP: ");
+  Serial.print(depDistance);
+  Serial.println(" cm");
+
+  String sensorStatus = "NO DETECTION";
+
+  bool obsActive =
+    (obsDistance > 0 &&
+     obsDistance < OBS_FAR);
+
+  bool depActive =
+    (depDistance > DEP_THRESHOLD &&
+     depDistance != -1);
+
+  if (obsActive && depActive)
+    sensorStatus = "OBS+DEP ACTIVE";
+  else if (obsActive)
+    sensorStatus = "OBS ACTIVE";
+  else if (depActive)
+    sensorStatus = "DEP ACTIVE";
+
+  // =======================
+  // OLED Display
+  // =======================
+
+  display.clearDisplay();
+
+  display.setTextSize(1);
+
+  display.setCursor(0, 0);
+  display.println("SMART BLIND STICK");
+
+  display.setCursor(0, 15);
+  display.print("OBS: ");
+
+  if (obsDistance == -1)
+    display.print("No Echo");
+  else
+  {
+    display.print(obsDistance, 1);
+    display.print(" cm");
+  }
+
+  display.setCursor(0, 30);
+  display.print("DEP: ");
+
+  if (depDistance == -1)
+    display.print("No Echo");
+  else
+  {
+    display.print(depDistance, 1);
+    display.print(" cm");
+  }
+
+  display.setCursor(0, 50);
+  display.print(sensorStatus);
+
+  display.display();
+
+  // =======================
+  // Upload Every 10 Seconds
+  // =======================
+
+  if (millis() - lastUpload > 10000)
+  {
+    sendToSupabase(obsDistance);
+    lastUpload = millis();
+  }
+
+
+// =======================
+// Buzzer + Vibration Logic
+// =======================
+
+if (depActive)
+{
+  // Pit / Stairs detected
+
+  digitalWrite(BUZZER, HIGH);
+  digitalWrite(VIBRATION, HIGH);
+  delay(100);
+
+  digitalWrite(BUZZER, LOW);
+  digitalWrite(VIBRATION, LOW);
+  delay(100);
+
+  digitalWrite(BUZZER, HIGH);
+  digitalWrite(VIBRATION, HIGH);
+  delay(100);
+
+  digitalWrite(BUZZER, LOW);
+  digitalWrite(VIBRATION, LOW);
+  delay(300);
+}
+else if (obsDistance > 0)
+{
+  if (obsDistance < OBS_CLOSE)
+  {
+    // Very close obstacle
+
+    digitalWrite(BUZZER, HIGH);
+    digitalWrite(VIBRATION, HIGH);
+    delay(50);
+
+    digitalWrite(BUZZER, LOW);
+    digitalWrite(VIBRATION, LOW);
+    delay(50);
+  }
+  else if (obsDistance < OBS_MEDIUM)
+  {
+    // Medium obstacle
+
+    digitalWrite(BUZZER, HIGH);
+    digitalWrite(VIBRATION, HIGH);
+    delay(100);
+
+    digitalWrite(BUZZER, LOW);
+    digitalWrite(VIBRATION, LOW);
+    delay(150);
+  }
+  else if (obsDistance < OBS_FAR)
+  {
+    // Far obstacle
+
+    digitalWrite(BUZZER, HIGH);
+    digitalWrite(VIBRATION, HIGH);
+    delay(100);
+
+    digitalWrite(BUZZER, LOW);
+    digitalWrite(VIBRATION, LOW);
+    delay(400);
+  }
+  else
+  {
+    digitalWrite(BUZZER, LOW);
+    digitalWrite(VIBRATION, LOW);
+    delay(100);
+  }
+}
+else
+{
+  digitalWrite(BUZZER, LOW);
+  digitalWrite(VIBRATION, LOW);
+  delay(100);
+}
+}
