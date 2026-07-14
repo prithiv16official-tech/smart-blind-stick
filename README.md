@@ -444,7 +444,7 @@ This project is licensed under the **MIT License** — see the LICENSE file for 
 
 - **GitHub**: [prithiv16official-tech](https://github.com/prithiv16official-tech)
 - **LinkedIn**: [Prithiv S](https://www.linkedin.com/in/prithiv-s07/)
-- **Email**: [your-email@example.com]
+- **Email**: [prithiv16official@gmail.com]
 - **Internship**: Built at [RGreen Technologies](https://rgreentech.com)
 
 ---
